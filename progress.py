@@ -9,11 +9,10 @@ class ToolProgress(QDialog):
     plugin_id = 'CrackTools'
     def __init__(self, request, parent=None):
         super().__init__(parent)
-        from .jobs import PRIVATE, write_json
         self.setProperty('playliteBackgroundJob', True)
         self.setWindowTitle(self.plugin_id)
         self.install_directory = request.get('InstallDirectory')
-        self.resize(800, 480)
+        self.resize(800, 220)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(16)
@@ -23,12 +22,21 @@ class ToolProgress(QDialog):
         self.activity_log = QPlainTextEdit(self)
         self.activity_log.setReadOnly(True)
         self.activity_log.setPlaceholderText('VM and restoration log will appear here…')
+        self.details_toggle = QPushButton('Show details')
+        self.details_toggle.setCheckable(True)
+        self.details_toggle.toggled.connect(self.activity_log.setVisible)
+        self.details_toggle.toggled.connect(lambda checked: self.details_toggle.setText('Hide details' if checked else 'Show details'))
+        layout.addWidget(self.details_toggle, 0, Qt.AlignmentFlag.AlignLeft)
+        self.activity_log.hide()
         layout.addWidget(self.activity_log, 1)
         copy = QPushButton('Copy log')
         copy.clicked.connect(lambda: QApplication.clipboard().setText(self.activity_log.toPlainText()))
         self.log_path = QLabel()
         self.log_path.setWordWrap(True)
         self.log_path.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.log_path.hide()
+        self.details_toggle.toggled.connect(self.log_path.setVisible)
+        self.details_toggle.toggled.connect(lambda expanded: self.resize(self.width(), min(680,self.screen().availableGeometry().height()-48) if expanded else (420 if hasattr(self,'log') else 220)))
         layout.addWidget(self.log_path)
         self.button = QPushButton('Cancel')
         self.button.clicked.connect(self.cancel_or_close)
@@ -55,6 +63,7 @@ class ToolProgress(QDialog):
         os.chmod(self.job, 0o700)
         write_json(self.job / 'request.json', request)
         self.button.setText('Cancel')
+        self.details_toggle.setChecked(False)
         self.timer.start(500)
         self.process.start(sys.executable, ['-m', 'playlite.plugin_runner', self.plugin_id, self.job.name])
 
@@ -63,8 +72,11 @@ class ToolProgress(QDialog):
         if log.exists():
             text = log.read_text(errors='replace')[-262144:]
             if text != self.activity_log.toPlainText():
+                bar = self.activity_log.verticalScrollBar()
+                position = bar.value()
+                following = position >= bar.maximum() - 2
                 self.activity_log.setPlainText(text)
-                self.activity_log.verticalScrollBar().setValue(self.activity_log.verticalScrollBar().maximum())
+                bar.setValue(bar.maximum() if following else position)
         status = self.job / 'status.txt'
         if status.exists():
             self.status.setText(status.read_text(errors='replace')[-500:])
@@ -86,6 +98,8 @@ class ToolProgress(QDialog):
             self.result_data = dict(Success=False, Message='Installation stopped. Backups remain available for recovery.')
         self.status.setText(self.result_data.get('Message', 'Finished'))
         message = self.result_data.get('Message', 'Finished')
+        if not self.result_data.get('Success'):
+            self.details_toggle.setChecked(True)
         lines = self.activity_log.toPlainText().rstrip().splitlines()
         if not lines or lines[-1] != message:
             self.activity_log.appendPlainText(message)
@@ -112,7 +126,7 @@ class ToolBatchProgress(ToolProgress):
         self.batch_finished = False
         self.preflight = preflight
         super().__init__(jobs[0][1], parent)
-        self.resize(760, 240)
+        self.resize(800, 420)
         from PyQt6.QtWidgets import QPlainTextEdit
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
