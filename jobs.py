@@ -47,7 +47,8 @@ def main(process):
     try:
         result = run(job, process)
     except Exception as error:
-        result = dict(Success=False, Message=str(error) if isinstance(error, ValueError) else 'Installation failed. See the log; backups were retained if recovery was needed.')
+        message = str(error) if isinstance(error, ValueError) else 'Installation failed. See the log; backups were retained if recovery was needed.'
+        result = dict(Success=False, Message=re.sub(r'\b[a-fA-F0-9]{32}\b', '[redacted]', message))
         with (job / 'log.txt').open('a') as log:
             log.write('\n' + re.sub(r'\b[a-fA-F0-9]{32}\b', '[redacted]', traceback.format_exc()))
     finally:

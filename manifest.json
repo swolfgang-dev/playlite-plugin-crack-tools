@@ -6,6 +6,6 @@
   "type": "generic",
   "enabled": true,
   "repository": "swolfgang-dev/playlite-plugin-crack-tools",
-  "minimum_playlite_version": "0.2.74",
+  "minimum_playlite_version": "0.2.87",
   "description": "Shared verified backups, restoration, progress logs and game locks for game-file installers."
 }

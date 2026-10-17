@@ -10,6 +10,20 @@ from cracktools_source.backup import BACKUP, digest, snapshot, finalize, restore
 
 
 class BackupTests(unittest.TestCase):
+    def test_atomic_manifest_failure_preserves_original_and_other_temporary_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / 'manifest.json'
+            write_json(path, {'original': True})
+            unrelated = root / 'manifest.json.tmp'
+            unrelated.write_text('another writer')
+            with patch.object(Path, 'replace', side_effect=OSError('full disk')):
+                with self.assertRaises(OSError):
+                    write_json(path, {'new': True})
+            self.assertEqual(__import__('json').loads(path.read_text()), {'original': True})
+            self.assertEqual(unrelated.read_text(), 'another writer')
+            self.assertEqual(set(root.iterdir()), {path, unrelated})
+
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)

@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import shutil
 import uuid
+import tempfile
 from contextlib import contextmanager
 
 BACKUP = '.playlite-steamautocrack'
@@ -14,11 +15,18 @@ LOCK = '.playlite-steamautocrack.lock'
 
 
 def write_json(path, value):
-    temporary = path.with_name(path.name + '.tmp')
-    with temporary.open('w') as stream:
-        json.dump(value, stream)
-    temporary.chmod(0o600)
-    temporary.replace(path)
+    # This module is also copied into the VM, where Playlite is not installed.
+    content = json.dumps(value).encode()
+    descriptor, name = tempfile.mkstemp(prefix='.' + path.name + '-', suffix='.tmp', dir=path.parent)
+    temporary = Path(name)
+    try:
+        with os.fdopen(descriptor, 'wb') as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def digest(path, algorithm='sha256'):
