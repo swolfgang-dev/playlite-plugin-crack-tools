@@ -3,6 +3,7 @@ import hashlib
 import errno
 import time
 import json
+import re
 import os
 from pathlib import Path
 import shutil
@@ -234,6 +235,9 @@ def collect_existing_settings(root, check=lambda: None, status=lambda text: None
 def finalize(root):
     backup = root / BACKUP
     manifest = json.loads((backup / 'manifest.json').read_text())
+    validate_manifest(root, manifest)
+    if 'FileSet' not in manifest:
+        raise ValueError('The backup manifest has no original file inventory.')
     current = files(root)
     entries = {}
     for entry in manifest['files']:
@@ -258,9 +262,17 @@ def recover_cli_protection(root):
     if not journal.exists():
         return
     moves = json.loads(journal.read_text())
+    if not isinstance(moves, list):
+        raise ValueError('Invalid CLI recovery journal.')
+    paths = set()
     for move in moves:
+        if not isinstance(move, dict) or not all(isinstance(move.get(key), str) for key in ('source', 'hidden')):
+            raise ValueError('Invalid CLI recovery journal.')
         source = checked_path(backup, move['source'])
         hidden = checked_path(backup, move['hidden'])
+        if source == hidden or source in paths or hidden in paths:
+            raise ValueError('Conflicting paths in CLI recovery journal.')
+        paths.update((source, hidden))
         if source.exists() and hidden.exists():
             raise ValueError('CLI recovery protection has conflicting files; retained for review.')
         if not source.exists() and not hidden.exists():
@@ -302,12 +314,46 @@ def protect_cli_backups(root):
         recover_cli_protection(root)
 
 
+def validate_manifest(root, manifest):
+    if not isinstance(manifest, dict) or not isinstance(manifest.get('files'), list):
+        raise ValueError('Invalid original-file backup manifest.')
+    targets = set()
+    for entry in manifest['files']:
+        if not isinstance(entry, dict) or not isinstance(entry.get('path'), str):
+            raise ValueError('Invalid original-file backup entry.')
+        path = checked_path(root, entry['path'])
+        if path.relative_to(root).parts[0] in (BACKUP, LOCK) or path in targets:
+            raise ValueError('Conflicting original-file backup paths.')
+        targets.add(path)
+        for key in ('original', 'applied'):
+            value = entry.get(key)
+            if value is not None and (not isinstance(value, str) or not re.fullmatch(r'[a-fA-F0-9]{64}', value)):
+                raise ValueError('Invalid original-file backup hash.')
+        if entry.get('backup') is not None:
+            if not isinstance(entry['backup'], str) or not entry.get('original'):
+                raise ValueError('Invalid original-file backup reference.')
+            checked_path(root / BACKUP, entry['backup'])
+    if any(parent in targets for path in targets for parent in path.parents):
+        raise ValueError('Conflicting original-file backup paths.')
+    for key in ('FileSet', 'OriginalDirectories', 'CreatedDirectories'):
+        values = manifest.get(key, [])
+        if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
+            raise ValueError('Invalid original-file backup path list.')
+        for relative in values:
+            path = checked_path(root, relative)
+            if path.relative_to(root).parts[0] in (BACKUP, LOCK):
+                raise ValueError('Reserved path in original-file backup manifest.')
+            if key != 'FileSet' and path in targets:
+                raise ValueError('A backup path is both a file and a directory.')
+
+
 def restore(root, check=lambda: None, status=lambda text: None):
     backup = root / BACKUP
     if backup.is_symlink():
         raise ValueError('Backup directory cannot be a symlink.')
-    recover_cli_protection(root)
     manifest = json.loads((backup / 'manifest.json').read_text())
+    validate_manifest(root, manifest)
+    recover_cli_protection(root)
     entries = manifest['files']
     # Validate every entry before changing any game file. This also supports
     # the manifests produced by the former native engine.
@@ -340,7 +386,9 @@ def restore(root, check=lambda: None, status=lambda text: None):
         path = checked_path(root, entry['path'])
         if entry.get('backup'):
             path.parent.mkdir(parents=True, exist_ok=True)
-            temporary = path.with_name(path.name + '.playlite-restore-tmp')
+            descriptor, filename = tempfile.mkstemp(prefix='.playlite-restore-', suffix='.tmp', dir=path.parent)
+            os.close(descriptor)
+            temporary = Path(filename)
             try:
                 shutil.copy2(backup / entry['backup'], temporary)
                 temporary.replace(path)

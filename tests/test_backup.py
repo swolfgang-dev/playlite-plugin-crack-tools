@@ -10,6 +10,33 @@ from cracktools_source.backup import BACKUP, digest, snapshot, finalize, restore
 
 
 class BackupTests(unittest.TestCase):
+    def test_duplicate_restore_targets_are_rejected_before_any_file_changes(self):
+        import json
+        snapshot(self.root, '123')
+        (self.root / 'steam_api64.dll').write_bytes(b'emulator')
+        finalize(self.root)
+        path = self.root / BACKUP / 'manifest.json'
+        manifest = json.loads(path.read_text())
+        manifest['files'].append(dict(path='steam_api64.dll', applied=digest(self.root / 'steam_api64.dll')))
+        write_json(path, manifest)
+        with self.assertRaisesRegex(ValueError, 'Conflicting'):
+            restore(self.root)
+        self.assertEqual((self.root / 'steam_api64.dll').read_bytes(), b'emulator')
+        self.assertTrue((self.root / BACKUP / 'original-0').is_file())
+
+    def test_overlapping_recovery_moves_are_rejected_before_renaming(self):
+        snapshot(self.root, '123')
+        backup = self.root / BACKUP
+        hidden = backup / 'protected-123'
+        hidden.write_bytes(b'keep')
+        write_json(backup / 'cli-protection.json', [
+            {'source': 'old.exe', 'hidden': 'protected-123'},
+            {'source': 'another.exe', 'hidden': 'protected-123'}])
+        with self.assertRaisesRegex(ValueError, 'Conflicting'):
+            recover_cli_protection(self.root)
+        self.assertEqual(hidden.read_bytes(), b'keep')
+        self.assertFalse((backup / 'old.exe').exists())
+
     def test_atomic_manifest_failure_preserves_original_and_other_temporary_files(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
